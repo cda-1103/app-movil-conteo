@@ -1,0 +1,35 @@
+name: app_movil
+description: "A new Flutter project."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+    # Networking
+  dio: ^5.3.0
+    
+    # Base de datos local (Súper rápida)
+  isar: ^3.1.0+1
+  isar_flutter_libs: ^3.1.0+1
+  path_provider: ^2.1.1 # Necesario para encontrar donde guardar la BD
+    
+    # Gestión de Estado
+  provider: ^6.0.5
+    
+    # Guardar IP simple
+  shared_preferences: ^2.2.0
+  mobile_scanner: ^3.5.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  build_runner: ^2.4.6
+  isar_generator: ^3.1.0+1
+
+flutter:
+  uses-material-design: true
