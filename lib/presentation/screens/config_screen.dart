@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/config/api_config.dart'; // Asegúrate de que la ruta al config sea correcta
-import '../screens/count_screen.dart'; // Importamos la pantalla real
+import '../screens/syncdata_screen.dart';
 
 class ConfigScreen extends StatefulWidget {
   const ConfigScreen({super.key});
@@ -84,7 +84,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
       // D. Navegar a la Pantalla REAL de Conteo
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (_) => const InventoryCountScreen()),
+        MaterialPageRoute(builder: (_) => const SyncScreen()),
       );
     } on DioException catch (e) {
       setState(() {

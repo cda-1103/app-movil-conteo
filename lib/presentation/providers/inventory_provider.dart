@@ -1,29 +1,33 @@
 import 'package:flutter/material.dart';
-import 'package:isar/isar.dart';
-import 'package:dio/dio.dart';
 import '../../data/local/product_model.dart';
+import '../../data/local/database.dart'; // <--- Usamos el Helper
 import '../../core/config/api_config.dart';
 
 class InventoryProvider extends ChangeNotifier {
-  final Isar _isar;
-  InventoryProvider(this._isar);
+  // Ya no inyectamos Isar, usaremos el Singleton de DatabaseHelper
 
-  List<Product> _countedProducts = [];
-  List<Product> get countedProducts => _countedProducts;
+  InventoryProvider();
 
   Product? _scannedProduct;
   Product? get scannedProduct => _scannedProduct;
 
   bool _isLoading = false;
   bool get isLoading => _isLoading;
+
   String? _error;
   String? get error => _error;
 
-  // Variable nueva para saber cuántos tenemos en total (no solo contados)
-  int _totalLocalItems = 0;
-  int get totalLocalItems => _totalLocalItems;
+  // Estadísticas
+  int _totalImportedItems = 0;
+  int get totalImportedItems => _totalImportedItems;
 
-  // ... (Misma función recursiva de antes, sin cambios) ...
+  int _totalCountedItems = 0;
+  int get totalCountedItems => _totalCountedItems;
+
+  DateTime? _countStartDate;
+  DateTime? get countStartDate => _countStartDate;
+
+  // --- LÓGICA DE RECURSIÓN (IGUAL QUE ANTES) ---
   List<dynamic>? _findListRecursively(dynamic data, {int depth = 0}) {
     if (depth > 4) return null;
     if (data is List) return data;
@@ -66,7 +70,6 @@ class InventoryProvider extends ChangeNotifier {
       final dio = DioClient().dio;
       var response = await dio.get('v1/products/');
 
-      // Redirección automática (Tu caso específico)
       if (response.statusCode == 200 && response.data is Map) {
         final map = response.data as Map;
         if (map.containsKey('inventario') && map['inventario'] is String) {
@@ -78,40 +81,38 @@ class InventoryProvider extends ChangeNotifier {
 
       if (response.statusCode == 200) {
         final List<dynamic>? dataList = _findListRecursively(response.data);
-
-        if (dataList == null) {
+        if (dataList == null)
           throw Exception("No encontré lista de productos.");
-        }
 
-        // --- DIAGNÓSTICO DE CONSOLA ---
-        print(
-          "LOG: ¡Sincronización exitosa! Se encontraron ${dataList.length} items.",
-        );
-        if (dataList.isNotEmpty) {
-          print("LOG: Ejemplo del primer item recibido: ${dataList.first}");
-        }
-        // -----------------------------
+        // --- OPERACIÓN BD ---
+        final db = DatabaseHelper.instance;
 
-        await _isar.writeTxn(() async {
-          for (var item in dataList) {
-            try {
-              if (item is Map<String, dynamic>) {
-                final newProduct = Product.fromJson(
-                  item,
-                ); // Usa el nuevo parser flexible
-                await _isar.products.put(newProduct);
-              }
-            } catch (e) {
-              print("LOG: Error guardando item individual: $e");
+        // 1. RESPALDO: Guardamos conteos previos en RAM
+        final prevCounts = await db.getPreviousCounts();
+
+        // 2. LIMPIEZA: Borramos todo
+        await db.deleteAll();
+
+        // 3. PREPARACIÓN: Convertimos JSON a Objetos
+        List<Product> batchList = [];
+        for (var item in dataList) {
+          if (item is Map<String, dynamic>) {
+            final p = Product.fromJson(item);
+
+            // 4. RESTAURACIÓN: Si ya estaba contado, le ponemos su valor
+            if (prevCounts.containsKey(p.sku)) {
+              p.countedQuantity = prevCounts[p.sku]!;
+              p.lastUpdated = DateTime.now(); // Actualizamos fecha
+              p.isSynced = false;
             }
+            batchList.add(p);
           }
-        });
+        }
 
-        await loadCountedProducts();
+        // 5. INSERCIÓN MASIVA (Batch)
+        await db.insertBatch(batchList);
 
-        // Actualizamos el contador total para dar feedback
-        _totalLocalItems = await _isar.products.count();
-        notifyListeners();
+        await loadStats();
       } else {
         _error = "Error HTTP: ${response.statusCode}";
       }
@@ -124,16 +125,22 @@ class InventoryProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> loadCountedProducts() async {
-    // Carga lista visible (SOLO LOS CONTADOS)
-    _countedProducts = await _isar.products
-        .filter()
-        .countedQuantityGreaterThan(0)
-        .sortByLastUpdatedDesc()
-        .findAll();
+  // --- GESTIÓN ---
+  Future<void> loadStats() async {
+    final db = DatabaseHelper.instance;
+    _totalImportedItems = await db.getCountImported();
+    _totalCountedItems = await db.getCountWorked();
 
-    // Actualiza el conteo total en background
-    _totalLocalItems = await _isar.products.count();
+    // Para la fecha de inicio, podríamos hacer una query compleja,
+    // o simplificar y asumir que es la fecha actual si hay items contados.
+    if (_totalCountedItems > 0) {
+      // Buscar el más viejo modificado
+      // (Esto es opcional, para simplificar pondremos Now o null)
+      _countStartDate = DateTime.now();
+    } else {
+      _countStartDate = null;
+    }
+
     notifyListeners();
   }
 
@@ -143,19 +150,16 @@ class InventoryProvider extends ChangeNotifier {
     notifyListeners();
 
     final cleanSku = sku.trim();
+    final db = DatabaseHelper.instance;
 
-    // Búsqueda insensible a mayúsculas (más amigable)
-    final product = await _isar.products
-        .filter()
-        .skuEqualTo(cleanSku, caseSensitive: false)
-        .findFirst();
+    final product = await db.getProductBySku(cleanSku);
 
     if (product != null) {
       _scannedProduct = product;
     } else {
       _scannedProduct = null;
-      // Mensaje de error mejorado
-      _error = "Producto no encontrado.\nTotal en BD: $_totalLocalItems items.";
+      _error =
+          "Producto no encontrado.\nTotal en Maestro: $_totalImportedItems items.";
     }
 
     _isLoading = false;
@@ -165,15 +169,14 @@ class InventoryProvider extends ChangeNotifier {
   Future<void> updateCount(double quantity) async {
     if (_scannedProduct == null) return;
 
-    await _isar.writeTxn(() async {
-      _scannedProduct!.countedQuantity = quantity;
-      _scannedProduct!.lastUpdated = DateTime.now();
-      _scannedProduct!.isSynced = false;
-      await _isar.products.put(_scannedProduct!);
-    });
+    final db = DatabaseHelper.instance;
+    await db.updateCount(_scannedProduct!.sku, quantity);
+
+    // Actualizamos el producto en memoria para la UI inmediata
+    _scannedProduct!.countedQuantity = quantity;
 
     _scannedProduct = null;
-    await loadCountedProducts();
+    await loadStats();
   }
 
   void clearSelection() {

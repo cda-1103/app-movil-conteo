@@ -1,35 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:isar/isar.dart';
-import 'package:path_provider/path_provider.dart';
-import 'data/local/product_model.dart';
 import 'presentation/providers/inventory_provider.dart';
 import 'presentation/screens/config_screen.dart';
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 1. Inicializar Base de Datos Isar
-  final dir = await getApplicationDocumentsDirectory();
-  final isar = await Isar.open(
-    [ProductSchema], // Generado por build_runner
-    directory: dir.path,
-  );
+  // Ya no hace falta inicializar Isar aquí.
+  // SQLite se inicializa solo la p`rimera vez que lo llamas.
 
-  runApp(MyApp(isar: isar));
+  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
-  final Isar isar;
-
-  const MyApp({super.key, required this.isar});
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        // Inyectamos la BD en el Provider
-        ChangeNotifierProvider(create: (_) => InventoryProvider(isar)),
+        // El Provider ya no pide argumentos en el constructor
+        ChangeNotifierProvider(create: (_) => InventoryProvider()),
       ],
       child: MaterialApp(
         title: 'Inventario Offline',
@@ -38,7 +29,6 @@ class MyApp extends StatelessWidget {
           colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF569D79)),
           useMaterial3: true,
         ),
-        // Arrancamos en la configuración de IP
         home: const ConfigScreen(),
       ),
     );

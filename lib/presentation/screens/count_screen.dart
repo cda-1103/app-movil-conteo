@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../data/local/product_model.dart';
 import '../providers/inventory_provider.dart';
-import 'scanner_page.dart'; // <--- IMPORTAMOS LA NUEVA PÁGINA
+import 'scanner_page.dart'; // Asegúrate de tener este archivo del paso de la cámara
 
 class InventoryCountScreen extends StatefulWidget {
   const InventoryCountScreen({super.key});
@@ -23,22 +23,21 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
   @override
   void initState() {
     super.initState();
+    // SQFlite no necesita inicialización compleja, solo pedimos los datos
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<InventoryProvider>().loadCountedProducts();
+      // En SQFlite usamos loadStats o refrescamos la lista
+      // Como no tenemos una lista visible aquí todavía, esto es opcional si no mostramos la lista abajo
     });
   }
 
-  // --- FUNCIÓN PARA ABRIR CÁMARA ---
   Future<void> _openScanner() async {
-    // Navegamos a la página de cámara y esperamos el resultado
     final result = await Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => const ScannerPage()),
     );
 
-    // Si volvió con un código, lo buscamos
     if (result != null && result is String) {
-      _skuController.text = result; // Llenamos el campo visualmente
+      _skuController.text = result;
       if (mounted) {
         context.read<InventoryProvider>().scanProduct(result);
       }
@@ -47,6 +46,7 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Usamos watch para que se actualice si scannedProduct cambia
     final provider = context.watch<InventoryProvider>();
 
     return Scaffold(
@@ -56,39 +56,16 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios, color: Colors.black),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            provider.clearSelection(); // Limpiamos al salir
+            Navigator.pop(context);
+          },
         ),
         title: const Text(
           "Conteo",
           style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
         ),
         centerTitle: true,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.cloud_download, color: Colors.black),
-            onPressed: () async {
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(const SnackBar(content: Text("Descargando...")));
-              await provider.syncProductsDown();
-              if (provider.error != null) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(provider.error!),
-                    backgroundColor: Colors.red,
-                  ),
-                );
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text("¡Sincronización OK!"),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              }
-            },
-          ),
-        ],
       ),
       body: Column(
         children: [
@@ -99,7 +76,7 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
             color: _bgGrey,
             child: Column(
               children: [
-                // --- INPUT ESCANEAR MEJORADO ---
+                // INPUT ESCANEAR
                 _buildInputContainer(
                   child: TextField(
                     controller: _skuController,
@@ -107,13 +84,12 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
                     decoration: InputDecoration(
                       hintText: "Escanear SKU...",
                       border: InputBorder.none,
-                      // EL ÍCONO AHORA ES UN BOTÓN DE CÁMARA FUNCIONAL
                       prefixIcon: IconButton(
                         icon: const Icon(
                           Icons.qr_code_scanner,
                           color: Colors.black87,
                         ),
-                        onPressed: _openScanner, // <--- Acción de abrir cámara
+                        onPressed: _openScanner,
                         tooltip: "Abrir Cámara",
                       ),
                       suffixIcon: IconButton(
@@ -181,8 +157,9 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
                                 ),
                               ),
                               Text("SKU: ${provider.scannedProduct!.sku}"),
+                              // Mostramos stock contado vs sistema
                               Text(
-                                "Stock Sistema: ${provider.scannedProduct!.systemStock.toInt()}",
+                                "Contado: ${provider.scannedProduct!.countedQuantity.toInt()} / Sistema: ${provider.scannedProduct!.systemStock.toInt()}",
                               ),
                             ],
                           ),
@@ -233,33 +210,15 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
             ),
           ),
 
-          const Divider(),
+          const Spacer(),
 
-          Expanded(
-            child: provider.countedProducts.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.inventory_2_outlined,
-                          size: 60,
-                          color: Colors.grey[300],
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          "Lista vacía",
-                          style: TextStyle(color: Colors.grey[400]),
-                        ),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemCount: provider.countedProducts.length,
-                    itemBuilder: (context, index) =>
-                        _buildProductCard(provider.countedProducts[index]),
-                  ),
+          const Padding(
+            padding: EdgeInsets.all(20.0),
+            child: Text(
+              "Escanea un producto para ver sus detalles y actualizar el conteo.",
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey),
+            ),
           ),
         ],
       ),
@@ -272,7 +231,14 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
       provider.updateCount(qty);
       _qtyController.clear();
       _skuController.clear();
-      FocusScope.of(context).previousFocus();
+      FocusScope.of(context).previousFocus(); // Ocultar teclado
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("¡Guardado!"),
+          duration: Duration(milliseconds: 800),
+        ),
+      );
     }
   }
 
@@ -284,56 +250,6 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
       ),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: child,
-    );
-  }
-
-  Widget _buildProductCard(Product product) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      title: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 5),
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              color: Colors.grey[100],
-              child: const Icon(Icons.inventory, color: Colors.grey),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    product.name,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  Text(
-                    "SKU: ${product.sku}",
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                ],
-              ),
-            ),
-            Text(
-              "${product.countedQuantity.toInt()}",
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 18,
-                color: Color(0xFF569D79),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
