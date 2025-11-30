@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
+
 import '../../data/local/product_model.dart';
-import '../../data/local/database.dart'; // <--- Usamos el Helper
+import '../../data/local/database.dart';
 import '../../core/config/api_config.dart';
 
 class InventoryProvider extends ChangeNotifier {
-  // Ya no inyectamos Isar, usaremos el Singleton de DatabaseHelper
-
   InventoryProvider();
+
+  // Listas y Modelos
+  List<Product> _countedProducts = [];
+  List<Product> get countedProducts => _countedProducts;
 
   Product? _scannedProduct;
   Product? get scannedProduct => _scannedProduct;
 
+  // Estados de Carga
   bool _isLoading = false;
   bool get isLoading => _isLoading;
 
@@ -24,10 +28,46 @@ class InventoryProvider extends ChangeNotifier {
   int _totalCountedItems = 0;
   int get totalCountedItems => _totalCountedItems;
 
-  DateTime? _countStartDate;
+  // Fechas
+  DateTime? _countStartDate; // Primer conteo realizado
   DateTime? get countStartDate => _countStartDate;
 
-  // --- LÓGICA DE RECURSIÓN (IGUAL QUE ANTES) ---
+  DateTime? _countEndDate; // Último conteo realizado (Fin)
+  DateTime? get countEndDate => _countEndDate;
+
+  DateTime? _lastSync; // Cuándo se descargó el maestro
+  DateTime? get lastSync => _lastSync;
+
+  // ---------------------------------------------------------------------------
+  // 1. HARD RESET (EL BOTÓN DE PÁNICO)
+  // ---------------------------------------------------------------------------
+  Future<void> hardReset() async {
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final db = DatabaseHelper.instance;
+      await db.deleteAll();
+
+      _countedProducts = [];
+      _totalImportedItems = 0;
+      _totalCountedItems = 0;
+      _countStartDate = null;
+      _countEndDate = null; // <--- RESTABLECEMOS END DATE
+      _lastSync = null;
+      _scannedProduct = null;
+      _error = null;
+    } catch (e) {
+      _error = "Error al resetear: $e";
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 2. LÓGICA DE RECURSIÓN
+  // ---------------------------------------------------------------------------
   List<dynamic>? _findListRecursively(dynamic data, {int depth = 0}) {
     if (depth > 4) return null;
     if (data is List) return data;
@@ -61,6 +101,9 @@ class InventoryProvider extends ChangeNotifier {
     return null;
   }
 
+  // ---------------------------------------------------------------------------
+  // 3. SINCRONIZACIÓN (BAJADA)
+  // ---------------------------------------------------------------------------
   Future<void> syncProductsDown() async {
     _isLoading = true;
     _error = null;
@@ -84,35 +127,28 @@ class InventoryProvider extends ChangeNotifier {
         if (dataList == null)
           throw Exception("No encontré lista de productos.");
 
-        // --- OPERACIÓN BD ---
         final db = DatabaseHelper.instance;
 
-        // 1. RESPALDO: Guardamos conteos previos en RAM
         final prevCounts = await db.getPreviousCounts();
-
-        // 2. LIMPIEZA: Borramos todo
         await db.deleteAll();
 
-        // 3. PREPARACIÓN: Convertimos JSON a Objetos
         List<Product> batchList = [];
         for (var item in dataList) {
           if (item is Map<String, dynamic>) {
             final p = Product.fromJson(item);
-
-            // 4. RESTAURACIÓN: Si ya estaba contado, le ponemos su valor
             if (prevCounts.containsKey(p.sku)) {
               p.countedQuantity = prevCounts[p.sku]!;
-              p.lastUpdated = DateTime.now(); // Actualizamos fecha
+              p.lastUpdated = DateTime.now();
               p.isSynced = false;
             }
             batchList.add(p);
           }
         }
 
-        // 5. INSERCIÓN MASIVA (Batch)
         await db.insertBatch(batchList);
 
-        await loadStats();
+        _lastSync = DateTime.now();
+        await loadCountedProducts();
       } else {
         _error = "Error HTTP: ${response.statusCode}";
       }
@@ -125,20 +161,34 @@ class InventoryProvider extends ChangeNotifier {
     }
   }
 
-  // --- GESTIÓN ---
-  Future<void> loadStats() async {
+  // ---------------------------------------------------------------------------
+  // 4. GESTIÓN LOCAL
+  // ---------------------------------------------------------------------------
+  Future<void> loadCountedProducts() async {
     final db = DatabaseHelper.instance;
-    _totalImportedItems = await db.getCountImported();
-    _totalCountedItems = await db.getCountWorked();
 
-    // Para la fecha de inicio, podríamos hacer una query compleja,
-    // o simplificar y asumir que es la fecha actual si hay items contados.
-    if (_totalCountedItems > 0) {
-      // Buscar el más viejo modificado
-      // (Esto es opcional, para simplificar pondremos Now o null)
-      _countStartDate = DateTime.now();
+    // Esta lista viene ordenada por 'last_updated DESC' (del más reciente al más viejo)
+    _countedProducts = await db.getCountedProductsList();
+
+    _totalImportedItems = await db.getCountImported();
+    _totalCountedItems = _countedProducts.length;
+
+    // CÁLCULO DE FECHAS
+    if (_countedProducts.isNotEmpty) {
+      // El PRIMERO de la lista es el más reciente (Fin / Última actividad)
+      _countEndDate = _countedProducts.first.lastUpdated;
+
+      // El ÚLTIMO de la lista es el más antiguo (Inicio)
+      _countStartDate = _countedProducts.last.lastUpdated;
     } else {
       _countStartDate = null;
+      _countEndDate = null; // Si no hay conteos, no hay fin
+    }
+
+    if (_totalImportedItems == _totalCountedItems) {
+      _countEndDate = _countedProducts.first.lastUpdated;
+    } else {
+      _countEndDate = null;
     }
 
     notifyListeners();
@@ -172,11 +222,16 @@ class InventoryProvider extends ChangeNotifier {
     final db = DatabaseHelper.instance;
     await db.updateCount(_scannedProduct!.sku, quantity);
 
-    // Actualizamos el producto en memoria para la UI inmediata
     _scannedProduct!.countedQuantity = quantity;
-
     _scannedProduct = null;
-    await loadStats();
+
+    await loadCountedProducts();
+  }
+
+  Future<void> updateQuantityDirectly(String sku, double newQuantity) async {
+    final db = DatabaseHelper.instance;
+    await db.updateCount(sku, newQuantity);
+    await loadCountedProducts();
   }
 
   void clearSelection() {

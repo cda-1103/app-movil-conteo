@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../data/local/product_model.dart';
 import '../providers/inventory_provider.dart';
 import 'scanner_page.dart'; // Asegúrate de tener este archivo del paso de la cámara
 
@@ -176,7 +175,8 @@ class _InventoryCountScreenState extends State<InventoryCountScreen> {
                       focusNode: _qtyFocusNode,
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(
-                        hintText: "Cantidad a contar",
+                        hintText:
+                            "Cantidad a contar", //agregar validador con estado de saber si ya extiste o no
                         border: InputBorder.none,
                         icon: Icon(Icons.onetwothree, color: Colors.grey),
                       ),

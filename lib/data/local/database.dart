@@ -22,7 +22,6 @@ class DatabaseHelper {
   }
 
   Future<void> _createDB(Database db, int version) async {
-    // SKU es TEXT PRIMARY KEY, así evitamos duplicados automáticamente
     await db.execute('''
       CREATE TABLE products (
         sku TEXT PRIMARY KEY,
@@ -39,7 +38,6 @@ class DatabaseHelper {
 
   // --- OPERACIONES ---
 
-  // Insertar masivo (Batch) - Súper rápido
   Future<void> insertBatch(List<Product> products) async {
     final db = await instance.database;
     final batch = db.batch();
@@ -48,29 +46,33 @@ class DatabaseHelper {
       batch.insert(
         'products',
         product.toMap(),
-        conflictAlgorithm:
-            ConflictAlgorithm.replace, // Si existe, lo sobrescribe
+        conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
     await batch.commit(noResult: true);
   }
 
-  // Obtener estadísticas
+  // Estadísticas Numéricas
   Future<int> getCountImported() async {
     final db = await instance.database;
     final result = await db.rawQuery('SELECT COUNT(*) as total FROM products');
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
-  Future<int> getCountWorked() async {
+  // --- NUEVO: Traer la LISTA de objetos (Para la pantalla de detalle) ---
+  Future<List<Product>> getCountedProductsList() async {
     final db = await instance.database;
-    final result = await db.rawQuery(
-      'SELECT COUNT(*) as total FROM products WHERE counted_quantity > 0',
+    // Traemos todo lo que tenga cantidad > 0, ordenado por lo último que tocaste
+    final result = await db.query(
+      'products',
+      where: 'counted_quantity > 0',
+      orderBy: 'last_updated DESC',
     );
-    return Sqflite.firstIntValue(result) ?? 0;
+
+    // Convertimos de Mapas SQL a Objetos Product
+    return result.map((json) => Product.fromMap(json)).toList();
   }
 
-  // Buscar uno
   Future<Product?> getProductBySku(String sku) async {
     final db = await instance.database;
     final maps = await db.query('products', where: 'sku = ?', whereArgs: [sku]);
@@ -82,7 +84,6 @@ class DatabaseHelper {
     }
   }
 
-  // Actualizar conteo
   Future<void> updateCount(String sku, double quantity) async {
     final db = await instance.database;
     await db.update(
@@ -97,13 +98,11 @@ class DatabaseHelper {
     );
   }
 
-  // Borrar todo (Para limpiar antes de sincronizar)
   Future<void> deleteAll() async {
     final db = await instance.database;
     await db.delete('products');
   }
 
-  // Obtener mapa de conteos previos (Para el respaldo)
   Future<Map<String, double>> getPreviousCounts() async {
     final db = await instance.database;
     final result = await db.query('products', where: 'counted_quantity > 0');

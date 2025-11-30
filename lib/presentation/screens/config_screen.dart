@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
+import 'package:provider/provider.dart'; // <--- NECESARIO
 import 'package:shared_preferences/shared_preferences.dart';
-import '../../core/config/api_config.dart'; // Asegúrate de que la ruta al config sea correcta
-import '../screens/syncdata_screen.dart';
+import '../../core/config/api_config.dart';
+import '../providers/inventory_provider.dart'; // <--- NECESARIO
+import 'syncdata_screen.dart'; // Asegúrate que este nombre coincida con tu archivo real
 
 class ConfigScreen extends StatefulWidget {
   const ConfigScreen({super.key});
@@ -16,8 +18,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
   bool _isLoading = false;
   String? _errorMessage;
 
-  // Colores del diseño
-  final Color _primaryGreen = const Color(0xFF569D79);
+  final Color _primaryGreen = const Color(0xFF16A34A);
   final Color _bgGrey = const Color(0xFFF5F5F5);
 
   @override
@@ -26,7 +27,6 @@ class _ConfigScreenState extends State<ConfigScreen> {
     _loadSavedIp();
   }
 
-  // 1. Cargar IP guardada
   Future<void> _loadSavedIp() async {
     final prefs = await SharedPreferences.getInstance();
     final savedIp = prefs.getString('server_ip');
@@ -35,12 +35,44 @@ class _ConfigScreenState extends State<ConfigScreen> {
     }
   }
 
-  // 2. Probar conexión y Navegar
+  // --- NUEVO: LÓGICA PARA BORRAR DATOS ---
+  void _showResetDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("¿Restablecer todo?"),
+        content: const Text(
+          "Esto borrará la base de datos local y los conteos.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Cancelar", style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx); // Cierra diálogo
+              // Llama al provider para borrar todo
+              context.read<InventoryProvider>().hardReset();
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Datos eliminados correctamente")),
+              );
+            },
+            child: const Text(
+              "BORRAR TODO",
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _connect() async {
     final ip = _ipController.text.trim();
     if (ip.isEmpty) return;
 
-    // Ocultar teclado
     FocusScope.of(context).unfocus();
 
     setState(() {
@@ -48,40 +80,28 @@ class _ConfigScreenState extends State<ConfigScreen> {
       _errorMessage = null;
     });
 
-    // A. Configurar el Singleton
     ApiConfig.instance.setServerIp(ip);
 
     try {
-      // B. Test de conexión (Ping)
       final dio = Dio();
       dio.options.connectTimeout = const Duration(seconds: 3);
-
-      // Intentamos conectar a la raíz de la API para ver si responde
-      // Ajusta el puerto si tu Django no corre en el 8000
       final testUrl = 'http://$ip:8000/api/';
 
-      // Hacemos una petición HEAD o GET simple
-      // Nota: Si tu API requiere Auth para todo, esto podría dar 401 o 403,
-      // pero eso significa que "llegamos" al servidor, lo cual es éxito de red.
       try {
         await dio.get(testUrl);
       } catch (e) {
-        // Si es un error 404, 401, 403, significa que el servidor RESPONDIÓ.
-        // Solo nos preocupa si es ConnectionTimeout o ConnectionRefused.
         if (e is DioException &&
             (e.type == DioExceptionType.connectionTimeout ||
                 e.type == DioExceptionType.connectionError)) {
-          rethrow; // Re-lanzamos el error si es de conexión real
+          rethrow;
         }
       }
 
-      // C. Guardar éxito
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('server_ip', ip);
 
       if (!mounted) return;
 
-      // D. Navegar a la Pantalla REAL de Conteo
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const SyncScreen()),
@@ -91,10 +111,10 @@ class _ConfigScreenState extends State<ConfigScreen> {
         if (e.type == DioExceptionType.connectionTimeout ||
             e.type == DioExceptionType.receiveTimeout) {
           _errorMessage =
-              "Tiempo agotado. ¿El PC y el celular están en el mismo Wi-Fi?";
+              "Tiempo agotado. Verifica que ambos equipos estén en el mismo Wi-Fi.";
         } else if (e.type == DioExceptionType.connectionError) {
           _errorMessage =
-              "Conexión rechazada. Asegúrate de correr Django con: \npython manage.py runserver 0.0.0.0:8000";
+              "Conexión rechazada. Verifica que el servidor Django esté corriendo en 0.0.0.0:8000";
         } else {
           _errorMessage = "Error de conexión: ${e.message}";
         }
@@ -113,12 +133,12 @@ class _ConfigScreenState extends State<ConfigScreen> {
       appBar: AppBar(
         backgroundColor: _bgGrey,
         elevation: 0,
+        // --- AQUÍ AGREGAMOS EL BOTÓN DE RESET ---
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings, color: Colors.black54),
-            onPressed: () {
-              // Opciones futuras
-            },
+            icon: const Icon(Icons.delete_forever, color: Colors.redAccent),
+            tooltip: "Restablecer Datos (Dev Mode)",
+            onPressed: _showResetDialog,
           ),
         ],
       ),
@@ -127,11 +147,13 @@ class _ConfigScreenState extends State<ConfigScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text(
-              "Inventario v1.0",
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            // --- LOGO GRANDE ---
+            Image.asset(
+              'assets/images/kontar.png',
+              height: 180,
+              fit: BoxFit.contain,
             ),
-            const SizedBox(height: 60),
+            const SizedBox(height: 40),
 
             Container(
               decoration: BoxDecoration(
@@ -140,7 +162,9 @@ class _ConfigScreenState extends State<ConfigScreen> {
               ),
               child: TextField(
                 controller: _ipController,
-                keyboardType: TextInputType.number,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 decoration: const InputDecoration(
                   hintText: "IP del Servidor (ej. 192.168.1.15)",
                   prefixIcon: Icon(Icons.wifi, color: Colors.grey),
@@ -197,6 +221,17 @@ class _ConfigScreenState extends State<ConfigScreen> {
             ),
 
             const Spacer(),
+
+            Align(
+              alignment: Alignment.bottomCenter,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 20.0),
+                child: Text(
+                  "Versión 1.0.0 (Dev)",
+                  style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                ),
+              ),
+            ),
           ],
         ),
       ),

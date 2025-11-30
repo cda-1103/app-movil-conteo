@@ -6,9 +6,6 @@ import 'presentation/screens/config_screen.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Ya no hace falta inicializar Isar aquí.
-  // SQLite se inicializa solo la p`rimera vez que lo llamas.
-
   runApp(const MyApp());
 }
 

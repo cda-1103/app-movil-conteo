@@ -17,6 +17,7 @@ dependencies:
     
     # Gestión de Estado
   provider: ^6.0.5
+
     
     # Guardar IP simple
   shared_preferences: ^2.2.0
@@ -31,3 +32,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  assets:
+    - assets/images/  

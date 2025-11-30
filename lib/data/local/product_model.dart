@@ -83,7 +83,7 @@ class Product {
     );
   }
 
-  // Convertir de Objeto a SQLite
+  // Convertir un Objeto a SQLite
   Map<String, dynamic> toMap() {
     return {
       'sku': sku,
